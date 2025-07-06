@@ -11,6 +11,8 @@
             background: transparent;
             font-family: 'Arial', sans-serif;
             overflow: hidden;
+            height: 100vh;
+            width: 100vw;
         }
 
         .ticker-container {
@@ -20,15 +22,18 @@
             border-top: 2px solid #0f3460;
             border-bottom: 2px solid #0f3460;
             overflow: hidden;
-            position: relative;
+            position: fixed;
+            top: 0;
+            left: 0;
             box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            z-index: 1000;
         }
 
         .ticker-content {
             display: flex;
             align-items: center;
             height: 100%;
-            animation: scroll-left 90s linear infinite;
+            animation: scroll-left 75s linear infinite;
             white-space: nowrap;
         }
 
@@ -135,21 +140,25 @@
             margin-left: 3px;
         }
 
-        .loading {
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-            font-size: 16px;
-        }
-
         .real-data-indicator {
             color: #00ff88;
             font-weight: bold;
+            font-size: 8px;
+            margin-left: 2px;
         }
 
         .fallback-indicator {
             color: #ff4757;
             font-weight: bold;
+            font-size: 8px;
+            margin-left: 2px;
+        }
+
+        .loading {
+            color: #ffffff;
+            text-align: center;
+            padding: 30px;
+            font-size: 16px;
         }
     </style>
 </head>
@@ -162,26 +171,28 @@
     </div>
 
     <script>
-        class AlphaVantageOnlyTicker {
+        class FinnhubTicker {
             constructor() {
-                // YOUR ALPHA VANTAGE API KEY
-                this.apiKey = '1CEUSIYJVLEYZUSP';
+                // Your Finnhub API Key
+                this.apiKey = 'd1l70lhr01qt4thebu5gd1l70lhr01qt4thebu60';
                 
                 this.tickerContent = document.getElementById('tickerContent');
                 this.marketStatus = document.getElementById('marketStatus');
                 this.newsIndex = 0;
                 this.realDataCount = 0;
                 this.totalSymbols = 0;
+                this.apiCallCount = 0;
+                this.maxCallsPerMinute = 50; // Keep under 60 limit
                 
-                // Stock symbols for Alpha Vantage
+                // Stock symbols for Finnhub
                 this.stockSymbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'SPY', 'QQQ'];
                 
-                // Crypto symbols for Alpha Vantage - Using digital currency endpoint
+                // Crypto symbols for Finnhub (they use different format)
                 this.cryptoSymbols = [
-                    { symbol: 'BTC', av_symbol: 'BTC' },
-                    { symbol: 'ETH', av_symbol: 'ETH' },
-                    { symbol: 'ADA', av_symbol: 'ADA' },
-                    { symbol: 'DOT', av_symbol: 'DOT' }
+                    'BINANCE:BTCUSDT',  // Bitcoin
+                    'BINANCE:ETHUSDT',  // Ethereum
+                    'BINANCE:SOLUSDT',  // Solana
+                    'BINANCE:XRPUSDT'   // XRP
                 ];
                 
                 this.news = [
@@ -191,57 +202,66 @@
                     "📱 Major tech companies report record quarterly growth",
                     "⚡ Energy sector demonstrates stability in changing market conditions",
                     "💎 Digital assets gain momentum among retail and institutional investors",
-                    "🌐 Global markets react to ongoing geopolitical and economic developments",
+                    "🌐 Global markets react to ongoing geopolitical developments",
                     "🏦 Financial sector maintains strong performance in current environment"
                 ];
                 
+                this.totalSymbols = this.stockSymbols.length + this.cryptoSymbols.length;
                 this.init();
             }
 
             async init() {
-                console.log('🚀 Starting Money & Finance ticker...');
-                console.log('API Key configured:', this.apiKey !== 'YOUR_API_KEY_HERE' ? '✅ Yes' : '❌ Please set your API key');
+                console.log('🚀 Starting Finnhub Money & Finance ticker...');
+                console.log('API Key configured:', this.apiKey ? '✅ Yes' : '❌ No');
+                console.log(`Rate limit: ${this.maxCallsPerMinute}/60 calls per minute`);
                 
                 await this.updateTicker();
-                // Update every 15 minutes (Alpha Vantage free tier: 5 calls/minute, 500/day)
-                setInterval(() => this.updateTicker(), 900000);
+                // Update every 5 minutes to respect rate limits and avoid hitting the limit
+                setInterval(() => this.updateTicker(), 300000);
                 this.updateMarketStatus();
                 setInterval(() => this.updateMarketStatus(), 60000);
+                
+                // Reset API call counter every minute
+                setInterval(() => {
+                    console.log(`📊 API calls this minute: ${this.apiCallCount}/60`);
+                    this.apiCallCount = 0;
+                }, 60000);
+            }
+
+            async rateLimitedFetch(url) {
+                if (this.apiCallCount >= this.maxCallsPerMinute) {
+                    console.log('⚠️ Rate limit reached, skipping API call');
+                    return null;
+                }
+                
+                this.apiCallCount++;
+                return fetch(url);
             }
 
             async fetchStockData(symbol) {
                 try {
-                    const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${this.apiKey}`;
-                    console.log(`📈 Fetching stock data for ${symbol}...`);
+                    const url = `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${this.apiKey}`;
+                    console.log(`📈 Fetching stock data for ${symbol}... (API call ${this.apiCallCount + 1})`);
                     
-                    const response = await fetch(url);
+                    const response = await this.rateLimitedFetch(url);
+                    if (!response) return null;
+                    
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     
                     const data = await response.json();
-                    console.log(`Alpha Vantage stock response for ${symbol}:`, data);
+                    console.log(`Finnhub stock response for ${symbol}:`, data);
                     
-                    // Check for API errors
-                    if (data['Note']) {
-                        console.log(`⚠️ API rate limit for ${symbol}:`, data['Note']);
+                    // Check if we got valid data
+                    if (!data.c || data.c === 0) {
+                        console.log(`❌ No valid stock data for ${symbol}`);
                         return null;
                     }
                     
-                    if (data['Error Message']) {
-                        console.log(`❌ API error for ${symbol}:`, data['Error Message']);
-                        return null;
-                    }
-                    
-                    const quote = data['Global Quote'];
-                    if (!quote || Object.keys(quote).length === 0) {
-                        console.log(`❌ No stock quote data for ${symbol}`);
-                        return null;
-                    }
-                    
-                    const price = parseFloat(quote['05. price']);
-                    const change = parseFloat(quote['09. change']);
-                    const changePercent = parseFloat(quote['10. change percent'].replace('%', ''));
+                    const price = data.c; // Current price
+                    const change = data.d; // Change
+                    const changePercent = data.dp; // Change percent
                     
                     console.log(`✅ REAL stock data for ${symbol}: $${price.toFixed(2)}`);
                     this.realDataCount++;
@@ -260,69 +280,65 @@
                 }
             }
 
-            async fetchCryptoData(cryptoItem) {
+            async fetchCryptoData(cryptoSymbol) {
                 try {
-                    const url = `https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol=${cryptoItem.av_symbol}&market=USD&apikey=${this.apiKey}`;
-                    console.log(`💰 Fetching crypto data for ${cryptoItem.symbol}...`);
+                    const url = `https://finnhub.io/api/v1/quote?symbol=${cryptoSymbol}&token=${this.apiKey}`;
+                    const displaySymbol = this.getCryptoDisplaySymbol(cryptoSymbol);
+                    console.log(`💰 Fetching crypto data for ${displaySymbol}... (API call ${this.apiCallCount + 1})`);
                     
-                    const response = await fetch(url);
+                    const response = await this.rateLimitedFetch(url);
+                    if (!response) return null;
+                    
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     
                     const data = await response.json();
-                    console.log(`Money & Finance crypto response for ${cryptoItem.symbol}:`, data);
+                    console.log(`Finnhub crypto response for ${displaySymbol}:`, data);
                     
-                    // Check for API errors
-                    if (data['Note']) {
-                        console.log(`⚠️ API rate limit for ${cryptoItem.symbol}:`, data['Note']);
+                    // Check if we got valid data
+                    if (!data.c || data.c === 0) {
+                        console.log(`❌ No valid crypto data for ${displaySymbol}`);
                         return null;
                     }
                     
-                    if (data['Error Message']) {
-                        console.log(`❌ API error for ${cryptoItem.symbol}:`, data['Error Message']);
-                        return null;
-                    }
+                    const price = data.c; // Current price
+                    const changePercent = data.dp; // Change percent
                     
-                    const timeSeries = data['Time Series (Digital Currency Daily)'];
-                    if (!timeSeries) {
-                        console.log(`❌ No crypto time series data for ${cryptoItem.symbol}`);
-                        return null;
-                    }
-                    
-                    // Get the most recent date's data
-                    const dates = Object.keys(timeSeries);
-                    const latestDate = dates[0];
-                    const latestData = timeSeries[latestDate];
-                    
-                    const price = parseFloat(latestData['4a. close (USD)']);
-                    const open = parseFloat(latestData['1a. open (USD)']);
-                    const changePercent = ((price - open) / open * 100).toFixed(2);
-                    
-                    console.log(`✅ REAL crypto data for ${cryptoItem.symbol}: ${price.toFixed(2)}`);
+                    console.log(`✅ REAL crypto data for ${displaySymbol}: $${price.toFixed(2)}`);
                     this.realDataCount++;
                     
                     // Format price based on crypto type
                     let formattedPrice;
-                    if (cryptoItem.symbol === 'BTC') {
+                    if (displaySymbol === 'BTC') {
                         formattedPrice = Math.round(price).toLocaleString();
-                    } else if (cryptoItem.symbol === 'ETH') {
-                        formattedPrice = Math.round(price).toLocaleString();
+                    } else if (displaySymbol === 'ETH' || displaySymbol === 'SOL') {
+                        formattedPrice = Math.round(price).toString();
                     } else {
-                        formattedPrice = price.toFixed(2);
+                        formattedPrice = price.toFixed(4);
                     }
                     
                     return {
-                        symbol: cryptoItem.symbol,
+                        symbol: displaySymbol,
                         price: formattedPrice,
-                        changePercent: changePercent,
+                        changePercent: changePercent.toFixed(2),
                         isReal: true,
                         type: 'crypto'
                     };
                 } catch (error) {
-                    console.error(`❌ Error fetching crypto data for ${cryptoItem.symbol}:`, error);
+                    console.error(`❌ Error fetching crypto data for ${cryptoSymbol}:`, error);
                     return null;
                 }
+            }
+
+            getCryptoDisplaySymbol(finnhubSymbol) {
+                const mapping = {
+                    'BINANCE:BTCUSDT': 'BTC',
+                    'BINANCE:ETHUSDT': 'ETH',
+                    'BINANCE:SOLUSDT': 'SOL',
+                    'BINANCE:XRPUSDT': 'XRP'
+                };
+                return mapping[finnhubSymbol] || finnhubSymbol;
             }
 
             getStockFallbackData(symbol) {
@@ -350,10 +366,10 @@
 
             getCryptoFallbackData(symbol) {
                 const fallback = {
-                    'BTC': { price: '108,000', changePercent: '1.25' },
-                    'ETH': { price: '4,200', changePercent: '2.15' },
-                    'ADA': { price: '1.35', changePercent: '0.85' },
-                    'DOT': { price: '9.80', changePercent: '1.75' }
+                    'BTC': { price: '108,200', changePercent: '1.25' },
+                    'ETH': { price: '4,180', changePercent: '2.15' },
+                    'SOL': { price: '245', changePercent: '3.85' },
+                    'XRP': { price: '0.6250', changePercent: '1.75' }
                 };
                 
                 if (fallback[symbol]) {
@@ -368,14 +384,13 @@
             }
 
             async updateTicker() {
-                console.log('=== 🔄 Starting Money & Finance ticker update ===');
+                console.log('=== 🔄 Starting Finnhub ticker update ===');
                 
                 this.realDataCount = 0;
-                this.totalSymbols = this.stockSymbols.length + this.cryptoSymbols.length;
                 const items = [];
                 let fallbackCount = 0;
                 
-                // Fetch stock data with delays to respect rate limits
+                // Fetch stock data with controlled rate limiting
                 for (let i = 0; i < this.stockSymbols.length; i++) {
                     const symbol = this.stockSymbols[i];
                     
@@ -411,14 +426,13 @@
                         `);
                     }
                     
-                    // Delay between API calls (12 seconds to respect 5 calls/minute limit)
+                    // Small delay between API calls (1 second to stay well under rate limit)
                     if (i < this.stockSymbols.length - 1) {
-                        console.log(`⏱️ Waiting 12 seconds before next API call...`);
-                        await new Promise(resolve => setTimeout(resolve, 12000));
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
 
-                // Add news item
+                // Add news after stocks
                 items.push(`
                     <div class="news-item">
                         <span class="news-icon">📰</span>
@@ -427,20 +441,20 @@
                 `);
                 this.newsIndex++;
 
-                // Wait before crypto calls
-                console.log(`⏱️ Waiting 12 seconds before crypto API calls...`);
-                await new Promise(resolve => setTimeout(resolve, 12000));
+                // Small delay before crypto calls
+                await new Promise(resolve => setTimeout(resolve, 2000));
 
-                // Fetch crypto data with delays
+                // Fetch crypto data
                 for (let i = 0; i < this.cryptoSymbols.length; i++) {
-                    const cryptoItem = this.cryptoSymbols[i];
+                    const cryptoSymbol = this.cryptoSymbols[i];
+                    const displaySymbol = this.getCryptoDisplaySymbol(cryptoSymbol);
                     
-                    let cryptoData = await this.fetchCryptoData(cryptoItem);
+                    let cryptoData = await this.fetchCryptoData(cryptoSymbol);
                     
                     if (!cryptoData) {
-                        cryptoData = this.getCryptoFallbackData(cryptoItem.symbol);
+                        cryptoData = this.getCryptoFallbackData(displaySymbol);
                         fallbackCount++;
-                        console.log(`⚠️ Using fallback crypto data for ${cryptoItem.symbol}`);
+                        console.log(`⚠️ Using fallback crypto data for ${displaySymbol}`);
                     }
                     
                     if (cryptoData) {
@@ -462,14 +476,13 @@
                         `);
                     }
                     
-                    // Delay between crypto API calls
+                    // Small delay between crypto API calls
                     if (i < this.cryptoSymbols.length - 1) {
-                        console.log(`⏱️ Waiting 12 seconds before next crypto API call...`);
-                        await new Promise(resolve => setTimeout(resolve, 12000));
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
 
-                // Add final news item
+                // Add final news
                 items.push(`
                     <div class="news-item">
                         <span class="news-icon">📰</span>
@@ -477,12 +490,13 @@
                     </div>
                 `);
 
-                console.log(`=== ✅ MONEY & FINANCE UPDATE COMPLETE ===`);
+                console.log(`=== ✅ FINNHUB UPDATE COMPLETE ===`);
                 console.log(`📊 Real data sources: ${this.realDataCount}/${this.totalSymbols}`);
                 console.log(`⚠️ Fallback data used: ${fallbackCount}/${this.totalSymbols}`);
                 console.log(`🎯 Success rate: ${((this.realDataCount/this.totalSymbols)*100).toFixed(1)}%`);
+                console.log(`📱 API calls used: ${this.apiCallCount}/60`);
                 
-                // Create seamless loop - duplicate content 2 times for smooth transition
+                // Create seamless loop
                 const content = items.join('');
                 this.tickerContent.innerHTML = content + content;
             }
@@ -503,8 +517,8 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('🚀 Money & Finance Real-Time Ticker Starting...');
-            new AlphaVantageOnlyTicker();
+            console.log('🚀 Finnhub Money & Finance Real-Time Ticker Starting...');
+            new FinnhubTicker();
         });
     </script>
 </body>
